@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <!-- Get version 1.1.0 of Fabric.js from CDN -->
+    <script src="/fabric.all.min.js" ></script>
+  
+  <script src="jquery.min.js"></script>
+
+<link rel="stylesheet" type="text/css" href="/css/style.css">
+<link rel="stylesheet" type="text/css" href="/css/ionicons.min.css">
+
+
+  <title>People Counting Camera</title>
+
+
+</head>
+
+<body>
+  <div id="container">
+    <header>
+      <div id="header_logo">
+        <i class="ion-eye" style="font-size: 62px;color: #1C407A;"></i>
+      </div>
+
+      <div id="header_text">
+        <h3 id="header_title">People Counting Camera</h3> 
+        <!-- <h5 id="header_subtitle">...</h5 > -->
+      </div>
+    </header>
+
+    <div id="main">
+      <div id="view">
+        <div id="view_wrap">
+            <p style="margin-left:50px; margin-top:50px"/>
+            <i class="icon ion-loading-c" style="font-size:62px;"></i>
+        </div>
+      </div>
+    </div>
+    <div id="nav">
+      <div id="nav_pos_title">
+        <h4 style="margin-left:5px">Actions</h4>
+      </div>
+      <div id="nav_pos_links">
+        <span>
+          <a tooltip href="/border.html" title="Set crossover boundary">
+            <li class="ion-android-locate" ></li>
+          </a>
+        </span>
+        <span>
+          <a tooltip href="/crop.html" title="Crop background">
+            <li class="ion-android-image" ></li>
+          </a>
+        </span>
+        <span>
+          <a tooltip href="/zoom.html" title="Set zoom">
+            <li class="ion-android-search" ></li>
+          </a>
+        </span>
+        <span>
+          <a tooltip href="/stream.html" title="Stream data">
+            <li class="ion-android-camera" ></li>
+          </a>
+        </span>
+      </div>
+    </div>
+
+
+    <script>
+
+    $("#nav_pos_links span a").click(function(e) {
+        // prevent from going to the page
+        e.preventDefault();
+
+        // get the href
+        var href = $(this).attr("href");
+        $("#view_wrap").load(href, function() {
+            // do something after content has been loaded
+        });
+    });
+
+    // Upon loading the page set default .activeLink
+    $(window).load(function() {
+        $("#view_wrap").load("/border.html", function() {
+            // do something after content has been loaded
+        });
+    });
+
+    </script>
+
+    <footer>
+      <div id="footer_text">JANAD Design: Copyright (c) 2014</div>
+    </footer>
+  </div>
+</body>
+</html>
+

@@ -1,0 +1,218 @@
+
+
+<div style="width:770px; height 500px">
+
+      <div id="camera_image" style="float:left;background-image: url(http://localhost:8091/canvas);margin-left:10px;margin-top:20px;z-index: -1;">
+        <!-- A canvas tag is required or
+             Fabric.js doesn't know where to draw. -->
+        <canvas id="c" width=420 height=420 style="border:1px solid grey;width:420px;height:420px;" ></canvas>
+      </div>
+      <div style="margin-left:10px; margin-top:20px; float:right; width: 300px;">
+      	Adjust the rectangle with the controls below to restrict the area that the camera should analyse when detecting people.<br/><br/>
+      	The shape can also be manipulated directly on the canvas.
+      </div>
+      <div style="margin-left:10px; margin-top:20px; float:right; width: 300px;"><button id="reset" class="ion-pinpoint" type="reset" style="font-size:20px;">  Reset Boundary</button></div>
+      <div style="margin-left:10px; margin-top:20px; float:right; width: 300px;">Changes to the rectangle are automatically updated on the camera.</div>
+
+
+<div style="margin-left:10px; margin-top:20px; float:right; width: 300px;">
+
+
+<div class="controls">
+  <div style="height:30px">
+    <label><span>Top:</span> <input id="top-control" value="150" min="0" max="300" type="range" style="float: right"></label>
+  </div>
+  <div style="height:30px">
+    <label><span>Left:</span> <input id="left-control" value="150" min="0" max="300" type="range" style="float: right"></label>
+  </div>
+  <div style="height:30px">
+    <label><span>Angle:</span> <input id="angle-control" value="0" min="-90" max="90" type="range" style="float: right"></label>
+  </div>
+  <div style="height:30px">
+    <label><span>Scale:</span> <input id="scale-control" value="1" min="0.1" max="3" step="0.1" type="range" style="float: right"></label>
+  </div>
+</div>
+
+<iframe name="hiddenFrame" style="display: none;"></iframe>
+<form name="dataForm" id="dataForm" action="http://localhost:8091/updateRectangle" method="POST" target="hiddenFrame" accept-charset="UTF-8"> 
+
+
+ <table>
+        <tr height="30px">
+          <td width="50px" style="text-align: right;">
+          	Top:
+          </td>
+			<td width="50px">
+				<input type="text" name="top" id="top" style="width: 50px" readonly/>
+          </td>
+		  <td width="50px" style="text-align: right;">
+		  	Left:
+          </td>
+          <td width="50px">
+          	<input type="text" name="left" id="left" style="width: 50px;" readonly/>
+          </td>
+        </tr>
+        <tr height="30px">
+          <td width="50px" style="text-align: right;">
+          	Angle:
+          </td>
+			<td width="50px">
+				<input type="text" name="angle" id="angle" style="width: 50px" readonly/>
+          </td>
+		  <td width="50px" style="text-align: right;">
+		  	Scale:
+          </td>
+          <td width="50px">
+          	<input type="text" name="scale" id="scale" style="width: 50px;" readonly/>
+          </td>
+        </tr>
+ </table>
+  <input type="submit" value="Submit"> 
+</form> 
+</div>
+
+
+</div>
+
+<script>
+(function() {
+  var canvas = this.__canvas = new fabric.Canvas('c');
+  fabric.Object.prototype.transparentCorners = false;
+
+  var $ = function(id){return document.getElementById(id)};
+
+  var rect = new fabric.Rect({
+    width: 300,
+    height: 300,
+    top: 210,
+    left: 210,
+    fill: 'rgba(35,81,127,0.5)'
+  });
+
+  canvas.add(rect);
+
+    // Submit form controls
+  var top = $('top');
+  var left = $('left');
+  var angle = $('angle');
+  var scale = $('scale');
+
+  var angleControl = $('angle-control');
+  angleControl.onchange = function() {
+    rect.setAngle(parseInt(this.value, 10)).setCoords();
+    angle.value = parseInt(this.value, 10);
+    canvas.renderAll();
+  };
+
+  var scaleControl = $('scale-control');
+  scaleControl.onchange = function() {
+    rect.scale(parseFloat(this.value)).setCoords();
+    scale.value = parseFloat(this.value);
+    canvas.renderAll();
+  };
+
+  var topControl = $('top-control');
+  topControl.onchange = function() {
+    rect.setTop(parseInt(this.value, 10)).setCoords();
+    top = parseInt(this.value, 10);
+    canvas.renderAll();
+  };
+
+  var leftControl = $('left-control');
+  leftControl.onchange = function() {
+    rect.setLeft(parseInt(this.value, 10)).setCoords();
+    left = parseInt(this.value, 10);
+    canvas.renderAll();
+  };
+
+  function updateControls() {
+    scale.value = scaleControl.value = parseFloat(rect.getScaleX());
+    angle.value = angleControl.value = parseInt(rect.getAngle(), 10);
+    left.value = leftControl.value = parseInt(rect.getLeft(), 10);
+    top.value = topControl.value = parseInt(rect.getTop(), 10);
+  }
+  canvas.on({
+    'object:moving': updateControls,
+    'object:scaling': updateControls,
+    'object:resizing': updateControls,
+    'object:rotating': updateControls,
+    'mouse:up': onMouseUp
+  });
+
+
+ function resetRectangle() {
+      document.getElementById("reset").onclick = function() {
+       
+    var rect0 = canvas.item(0);
+
+	//var angleControl = $('angle-control');
+    rect0.setAngle(parseInt(0, 10)).setCoords();
+
+  	//var scaleControl = $('scale-control');
+    rect0.scale(parseFloat(1)).setCoords();
+
+  	//var topControl = $('top-control');
+    rect0.setTop(parseInt(210, 10)).setCoords();
+
+  	//var leftControl = $('left-control');
+    rect0.setLeft(parseInt(210, 10)).setCoords();
+    canvas.renderAll();
+
+    updateControls();
+    postRectangleDataToApi();
+	  };
+    };
+
+    // Sets the onclick event
+    resetRectangle();
+
+
+ 	jQuery.getJSON( "http://localhost:8091/getRectangle", function( data ) {
+
+      console.log("top " + data.top);
+      console.log("left " + data.left);
+      console.log("angle " + data.angle);
+      console.log("scale " + data.scale);
+
+      var rect0 = canvas.item(0);
+	//var angleControl = $('angle-control');
+    rect0.setAngle(parseInt(data.angle, 10)).setCoords();
+
+  	//var scaleControl = $('scale-control');
+    rect0.scale(parseFloat(data.scale)).setCoords();
+
+  	//var topControl = $('top-control');
+    rect0.setTop(parseInt(data.top, 10)).setCoords();
+
+  	//var leftControl = $('left-control');
+    rect0.setLeft(parseInt(data.left, 10)).setCoords();
+    canvas.renderAll();
+
+    updateControls();
+    postRectangleDataToApi();
+        
+    })
+    .fail(function(){
+      alert("error");
+      $("#reset").click(); // trigger the reset
+    });
+
+})();
+
+  function onMouseUp(e) {
+    postRectangleDataToApi();
+  }
+
+  function postRectangleDataToApi()
+  {
+    var canvas = this.__canvas;
+    if(canvas != null)
+    {
+      console.log("submitting rectangle data");
+      $('#dataForm').submit();
+    }
+  }
+
+
+
+</script>
