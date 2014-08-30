@@ -4,6 +4,25 @@ var restify = require('restify');
 var fs = require('fs');
 var http = require('http');
 
+var PORT = 80;
+
+// Print process.argv
+if(process.argv.length > 0){
+  //console.log("\tCommand line arguments"); 
+
+  process.argv.forEach(function (val, index, array) {
+    //console.log(index + ': ' + val);
+    switch(index){
+      case 0:
+      case 1:
+        break;
+      case 2:
+        PORT = val;
+        break;
+    }
+  });
+}
+
 // API Rest Server
 var server = restify.createServer({
   name: 'people-counter-camera-api',
@@ -133,8 +152,7 @@ server.post('/updateRectangle', function (req, res, next) {
 
 
 // Websocket server to stream camera feed
-var STREAM_SECRET = "secret"
-  STREAM_PORT =  8082,
+var STREAM_SECRET = "secret",
   WEBSOCKET_PORT = 8091,
   STREAM_MAGIC_BYTES = 'jsmp'; // Must be 4 bytes
 
@@ -195,7 +213,7 @@ var streamServerCallback  = function(request, response) {
   }
 };
 
-console.log('Listening for MPEG Stream on http://127.0.0.1:'+STREAM_PORT+'/stream/<secret>/<width>/<height>');
+console.log('Listening for MPEG Stream on http://127.0.0.1:' +PORT+ '/stream/<secret>/<width>/<height>');
 console.log('Awaiting WebSocket connections on ws://127.0.0.1:'+WEBSOCKET_PORT+'/');
 
 // Server for html via the Connect library
@@ -211,28 +229,6 @@ var app = connect()
       })
       .use("/stream", streamServerCallback);
 
-var port = 8090;
-var testMode = false;
 
-// Print process.argv
-if(process.argv.length > 0){
-  //console.log("\tCommand line arguments"); 
-
-  process.argv.forEach(function (val, index, array) {
-    //console.log(index + ': ' + val);
-    switch(index){
-      case 0:
-      case 1:
-        break;
-      case 2:
-        port = val;
-        break;
-    }
-  });
-}
-
-console.log("Starting Peolple Counting server on port " + port);
-app.listen(port);
-
-// Now chain the connect middleware server to the http server 
-//http.createServer(app, streamServerCallback).listen(port);
+console.log("Starting Peolple Counting server on port " + PORT);
+app.listen(PORT);

@@ -10,7 +10,7 @@ div#container{
   background-color: #fff;
   width:780px;
   float:left;
-  min-height:480px;
+  min-height:490px;
   overflow:auto;
   border:1px solid grey;
 }
@@ -19,7 +19,7 @@ div#container{
   /*background-color: #CC5F39;*/
   background-color: #fff;
   width:120;
-  min-height:480px;
+  min-height:490px;
   margin-left: 780px;
   border:1px solid grey;
 }
@@ -161,7 +161,7 @@ footer{
   /*background-color:#BFAB9B;*/
 
   /*color: #ECECEA;*/
-  min-height:420px;
+  min-height:430px;
   /*font-family: KacstArt;*/
   border-bottom-left-radius: 5px;
     border-top-left-radius: 5px;
