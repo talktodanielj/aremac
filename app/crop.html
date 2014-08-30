@@ -2,7 +2,7 @@
 
 <div style="width:770px; height 500px">
 
-      <div id="camera_image" style="float:left;background-image: url(http://localhost:8091/canvas);margin-left:10px;margin-top:20px;z-index: -1;">
+      <div id="camera_image" style="float:left;background-image: url(./api/canvas);margin-left:10px;margin-top:20px;z-index: -1;">
         <!-- A canvas tag is required or
              Fabric.js doesn't know where to draw. -->
         <canvas id="c" width=420 height=420 style="border:1px solid grey;width:420px;height:420px;" ></canvas>
@@ -34,7 +34,7 @@
 </div>
 
 <iframe name="hiddenFrame" style="display: none;"></iframe>
-<form name="dataForm" id="dataForm" action="http://localhost:8091/updateRectangle" method="POST" target="hiddenFrame" accept-charset="UTF-8"> 
+<form name="dataForm" id="dataForm" action="./api/updateRectangle" method="POST" target="hiddenFrame" accept-charset="UTF-8"> 
 
 
  <table>
@@ -167,7 +167,7 @@
     resetRectangle();
 
 
- 	jQuery.getJSON( "http://localhost:8091/getRectangle", function( data ) {
+ 	jQuery.getJSON( "./api/getRectangle", function( data ) {
 
       console.log("top " + data.top);
       console.log("left " + data.left);
