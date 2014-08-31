@@ -5,7 +5,7 @@
       <div id="camera_image" style="float:left;background-image: url(./api/canvas);margin-left:10px;margin-top:20px;z-index: -1;">
         <!-- A canvas tag is required or
              Fabric.js doesn't know where to draw. -->
-        <canvas id="c" width=420 height=420 style="border:1px solid grey;width:420px;height:420px;" ></canvas>
+        <canvas id="c" width=420 height=420 style="border:1px solid grey;width:420px;height:420px;" tabindex="1"></canvas>
       </div>
       <div style="margin-left:10px; margin-top:20px; float:right; width: 300px;">
         You can set the crossover boundry here.<br/><br/>The background image comes from the camera and three points ovelay the background image. <br/><br/>The points at the edges can be moved up and down, the center point bends the line. When the backgrond is clicked the center point will disappear.<br/><br/><span style="text-decoration: underline; font-weight: bold;">Click on either of the edge points and the center point will reappear.</span>
@@ -118,7 +118,7 @@
       var center = data.center.split(",");
       var right = data.right.split(",");
 
-      console.log("right top" + right[1]);
+      console.log("right top " + right[1]);
 
       tLine.path[0][1] = parseInt(left[0]);
       tLine.path[0][2] = parseInt(left[1]);
@@ -150,7 +150,9 @@
   })();
 
   function onMouseUp(e) {
+
     postLinePointsToApi();
+
   }
 
   function postLinePointsToApi()
@@ -165,11 +167,26 @@
       var left = r0.left.toString() + "," + r0.top.toString(); 
       var center = r1.left.toString() + "," + r1.top.toString(); 
       var right = r2.left.toString() + "," + r2.top.toString(); 
-      $("#left_point").val( left ); // Set the value of a form input.
-      $("#center_point").val( center ); // Set the value of a form input.
-      $("#right_point").val( right ); // Set the value of a form input.
-      console.log("submitting crossoverdata");
-      $('#dataForm').submit();
+
+      var currentLeft = $("#left_point").val();
+      var currentCenter = $("#center_point").val();
+      var currentRight = $("#right_point").val();
+
+      if(currentLeft != left || center != currentCenter || right != currentRight)
+      {
+        $("#left_point").val( left ); // Set the value of a form input.
+        $("#center_point").val( center ); // Set the value of a form input.
+        $("#right_point").val( right ); // Set the value of a form input.
+        console.log("submitting crossoverdata");
+        $('#dataForm').submit();
+      }
+      {
+        console.log('No changes found');
+/*        console.log( currentLeft + "-" + left);
+        console.log( currentRight + "-" + right);
+        console.log( currentCenter + "-" + center);*/
+      }
+      //canvas.focus();
     }
   }
 

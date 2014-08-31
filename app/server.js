@@ -103,6 +103,7 @@ server.post('/updateCrossover', function (req, res, next) {
       }
   });
 
+  //res.header('Content-Type', 'text/html; charset=utf-8');
   res.send('OK');
   next();
 });
