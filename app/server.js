@@ -5,6 +5,7 @@ var fs = require('fs');
 var http = require('http');
 
 var PORT = 80;
+var FFMPEG = false;
 
 // Print process.argv
 if(process.argv.length > 0){
@@ -19,6 +20,9 @@ if(process.argv.length > 0){
       case 2:
         PORT = val;
         break;
+      case 3:
+        FFMPEG = true;
+        break;  
     }
   });
 }
@@ -253,20 +257,32 @@ var signalServerIsRunningCallback  = function()
 
 timers.setInterval(signalServerIsRunningCallback, 500); 
 
+// spawn the thread that starts ffmpeg
+/*
+ffmpeg -s 640x480 -f video4linux2 -i /dev/video0 -f mpeg1video \
+-b 800k -r 30 http://example.com:8082/yourpassword/640/480/
 
-var getCPUTemperatureCallback  = function() 
+*/
+
+if(FFMPEG)
 {
-  var outputFilename = '/var/tmp/nodejs_alive';
-  if(!fs.exists(outputFilename))
-  {
-    fs.writeFile(outputFilename, "", function(err) {
-        if(err) {
-          console.log(err);
-        }
-        else {}
-    });
+var spawn = require('child_process').spawn,
+    ffmpeg = spawn('ffmpeg', ["-s", "640x480", "-f", "video4linux2", "-i", "/dev/video0", "-f", "mpeg1video", "-b", "800k", "-r", "30", "http://127.0.0.1:"+PORT+"/stream/secret/640/480/"]);
+
+ffmpeg.stdout.on('data', function (data) {
+  //console.log(data);
+});
+
+ffmpeg.stderr.on('data', function (data) {
+  console.log('ffmpeg stderr: ' + data);
+});
+
+ffmpeg.on('close', function (code) {
+  if (code !== 0) {
+    console.log('ffmpeg process exited with code ' + code);
   }
-};
+});
+}
 
 
 
