@@ -233,3 +233,41 @@ var app = connect()
 
 console.log("Starting Peolple Counting server on port " + PORT);
 app.listen(PORT);
+
+// Start keep alive timer
+timers = require("timers");
+
+var signalServerIsRunningCallback  = function() 
+{
+  var outputFilename = '/var/tmp/nodejs_alive';
+  if(!fs.exists(outputFilename))
+  {
+    fs.writeFile(outputFilename, "", function(err) {
+        if(err) {
+          console.log(err);
+        }
+        else {}
+    });
+  }
+};
+
+timers.setInterval(signalServerIsRunningCallback, 500); 
+
+
+var getCPUTemperatureCallback  = function() 
+{
+  var outputFilename = '/var/tmp/nodejs_alive';
+  if(!fs.exists(outputFilename))
+  {
+    fs.writeFile(outputFilename, "", function(err) {
+        if(err) {
+          console.log(err);
+        }
+        else {}
+    });
+  }
+};
+
+
+
+
