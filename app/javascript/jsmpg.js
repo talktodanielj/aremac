@@ -30,16 +30,24 @@ var jsmpeg = window.jsmpeg = function( url, opts ) {
 	this.canvas = opts.canvas || document.createElement('canvas');
 	this.autoplay = !!opts.autoplay;
 	this.loop = !!opts.loop;
+	this.seekable = !!opts.seekable;
 	this.externalLoadCallback = opts.onload || null;
 	this.externalDecodeCallback = opts.ondecodeframe || null;
 	this.externalFinishedCallback = opts.onfinished || null;
-	this.bwFilter = opts.bwFilter || false;
 
 	this.customIntraQuantMatrix = new Uint8Array(64);
 	this.customNonIntraQuantMatrix = new Uint8Array(64);
 	this.blockData = new Int32Array(64);
-
-	this.canvasContext = this.canvas.getContext('2d');
+	this.zeroBlockData = new Int32Array(64);
+	this.fillArray(this.zeroBlockData, 0);
+	
+	// use WebGL for YCbCrToRGBA conversion if possible (much faster)
+	if( !opts.forceCanvas2D && this.initWebGL() ) {
+		this.renderFrame = this.renderFrameGL;
+	} else {
+		this.canvasContext = this.canvas.getContext('2d');
+		this.renderFrame = this.renderFrame2D;
+	}
 
 	if( url instanceof WebSocket ) {
 		this.client = url;
@@ -57,7 +65,6 @@ var jsmpeg = window.jsmpeg = function( url, opts ) {
 
 jsmpeg.prototype.waitForIntraFrame = true;
 jsmpeg.prototype.socketBufferSize = 512 * 1024; // 512kb each
-jsmpeg.prototype.onlostconnection = null;
 
 jsmpeg.prototype.initSocketClient = function( client ) {
 	this.buffer = new BitReader(new ArrayBuffer(this.socketBufferSize));
@@ -258,6 +265,12 @@ jsmpeg.prototype.stopRecording = function() {
 
 // ----------------------------------------------------------------------------
 // Loading via Ajax
+
+jsmpeg.prototype.intraFrames = [];
+jsmpeg.prototype.currentFrame = -1;
+jsmpeg.prototype.currentTime = 0;
+jsmpeg.prototype.frameCount = 0;
+jsmpeg.prototype.duration = 0;
 	
 jsmpeg.prototype.load = function( url ) {
 	this.url = url;
@@ -269,14 +282,17 @@ jsmpeg.prototype.load = function( url ) {
 			that.loadCallback(request.response);
 		}
 	};
-	request.onprogress = this.updateLoader.bind(this);
+
+	request.onprogress = this.gl 
+		? this.updateLoaderGL.bind(this) 
+		: this.updateLoader2D.bind(this);
 
 	request.open('GET', url);
 	request.responseType = "arraybuffer";
 	request.send();
 };
 
-jsmpeg.prototype.updateLoader = function( ev ) {
+jsmpeg.prototype.updateLoader2D = function( ev ) {
 	var 
 		p = ev.loaded / ev.total,
 		w = this.canvas.width,
@@ -288,14 +304,27 @@ jsmpeg.prototype.updateLoader = function( ev ) {
 	ctx.fillStyle = '#fff';
 	ctx.fillRect(0, h - h*p, w, h*p);
 };
+
+jsmpeg.prototype.updateLoaderGL = function( ev ) {
+	var gl = this.gl;
+	gl.uniform1f(gl.getUniformLocation(this.loadingProgram, 'loaded'), (ev.loaded / ev.total));
+	gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+};
 	
 jsmpeg.prototype.loadCallback = function(file) {
-	var time = Date.now();
 	this.buffer = new BitReader(file);
+
+	if( this.seekable ) {
+		this.collectIntraFrames();
+		this.buffer.index = 0;
+	}
 	
 	this.findStartCode(START_SEQUENCE);
 	this.firstSequenceHeader = this.buffer.index;
 	this.decodeSequenceHeader();
+
+	// Calculate the duration. This only works if the video is seekable and we have a frame count
+	this.duration = this.frameCount / this.pictureRate;
 
 	// Load the first frame
 	this.nextFrame();
@@ -309,9 +338,59 @@ jsmpeg.prototype.loadCallback = function(file) {
 	}
 };
 
+jsmpeg.prototype.collectIntraFrames = function() {
+	// Loop through the whole buffer and collect all intraFrames to build our seek index.
+	// We also keep track of total frame count here
+	var frame;
+	for( frame = 0; this.findStartCode(START_PICTURE) !== BitReader.NOT_FOUND; frame++ ) {
+
+		// Check if the found picture is an intra frame and remember the position
+		this.buffer.advance(10); // skip temporalReference
+		if( this.buffer.getBits(3) == PICTURE_TYPE_I ) {
+			// Remember index 13 bits back, before temporalReference and picture type
+			this.intraFrames.push({frame: frame, index: this.buffer.index - 13});
+		}
+	}
+
+	this.frameCount = frame;
+};
+
+jsmpeg.prototype.seekToFrame = function(seekFrame, seekExact) {
+	if( seekFrame < 0 || seekFrame >= this.frameCount || !this.intraFrames.length ) {
+		return false;
+	}
+
+	// Find the last intra frame before or equal to seek frame
+	var target = null;
+	for( var i = 0; i < this.intraFrames.length && this.intraFrames[i].frame <= seekFrame; i++ ) {
+		target = this.intraFrames[i];
+	}
+
+	this.buffer.index = target.index;
+	this.currentFrame = target.frame-1;
+
+	// If we're seeking to the exact frame, we may have to decode some more frames before
+	// the one we want
+	if( seekExact ) {
+		for( var frame = target.frame; frame < seekFrame; frame++ ) {
+			this.decodePicture(DECODE_SKIP_OUTPUT);
+			this.findStartCode(START_PICTURE);
+		}
+		this.currentFrame = seekFrame-1;
+	}
+
+	// Decode and display the picture we have seeked to
+	this.decodePicture();
+	return true;
+};
+
+jsmpeg.prototype.seekToTime = function(time, seekExact) {
+	this.seekToFrame( (time * this.pictureRate)|0, seekExact );
+};
+
 jsmpeg.prototype.play = function(file) {
 	if( this.playing ) { return; }
-	this.targetTime = Date.now();
+	this.targetTime = this.now();
 	this.playing = true;
 	this.scheduleNextFrame();
 };
@@ -321,6 +400,7 @@ jsmpeg.prototype.pause = function(file) {
 };
 
 jsmpeg.prototype.stop = function(file) {
+	this.currentFrame = -1;
 	if( this.buffer ) {
 		this.buffer.index = this.firstSequenceHeader;
 	}
@@ -371,8 +451,21 @@ jsmpeg.prototype.lateTime = 0;
 jsmpeg.prototype.firstSequenceHeader = 0;
 jsmpeg.prototype.targetTime = 0;
 
+jsmpeg.prototype.benchmark = false;
+jsmpeg.prototype.benchFrame = 0;
+jsmpeg.prototype.benchDecodeTimes = 0;
+jsmpeg.prototype.benchAvgFrameTime = 0;
+
+jsmpeg.prototype.now = function() {
+	return window.performance 
+		? window.performance.now() 
+		: Date.now();
+}
+
 jsmpeg.prototype.nextFrame = function() {
 	if( !this.buffer ) { return; }
+
+	var frameStart = this.now();
 	while(true) {
 		var code = this.buffer.findNextMPEGStartCode();
 		
@@ -384,6 +477,7 @@ jsmpeg.prototype.nextFrame = function() {
 				this.scheduleNextFrame();
 			}
 			this.decodePicture();
+			this.benchDecodeTimes += this.now() - frameStart;
 			return this.canvas;
 		}
 		else if( code == BitReader.NOT_FOUND ) {
@@ -406,24 +500,17 @@ jsmpeg.prototype.nextFrame = function() {
 };
 
 jsmpeg.prototype.scheduleNextFrame = function() {
-	this.lateTime = Date.now() - this.targetTime;
+	this.lateTime = this.now() - this.targetTime;
 	var wait = Math.max(0, (1000/this.pictureRate) - this.lateTime);
-	this.targetTime = Date.now() + wait;
+	this.targetTime = this.now() + wait;
 
 	if( this.benchmark ) {
-		var now = Date.now();
-		if(!this.benchframe) {
-			this.benchstart = now;
-			this.benchframe = 0;
-		}
-		this.benchframe++;
-		var timepassed = now - this.benchstart;
-		if( this.benchframe >= 100 ) {
-			this.benchfps = (this.benchframe / timepassed) * 1000;
-			if( console ) {
-				console.log("frames per second: " + this.benchfps);
-			}
-			this.benchframe = null;
+		this.benchFrame++;
+		if( this.benchFrame >= 120 ) {
+			this.benchAvgFrameTime = this.benchDecodeTimes / this.benchFrame;
+			this.benchFrame = 0;
+			this.benchDecodeTimes = 0;
+			if( window.console ) { console.log("Average time per frame:", this.benchAvgFrameTime, 'ms'); }
 		}
 		setTimeout( this.nextFrame.bind(this), 0);
 	}
@@ -515,13 +602,14 @@ jsmpeg.prototype.initBuffers = function() {
 	this.canvas.width = this.width;
 	this.canvas.height = this.height;
 	
-	this.currentRGBA = this.canvasContext.getImageData(0, 0, this.width, this.height);
-
-	if( this.bwFilter ) {
-		// This fails in IE10; don't use the bwFilter if you need to support it.
-		this.currentRGBA32 = new Uint32Array( this.currentRGBA.data.buffer );
+	if( this.gl ) {
+		this.gl.useProgram(this.program);
+		this.gl.viewport(0, 0, this.width, this.height);
 	}
-	this.fillArray(this.currentRGBA.data, 255);
+	else {
+		this.currentRGBA = this.canvasContext.getImageData(0, 0, this.width, this.height);
+		this.fillArray(this.currentRGBA.data, 255);
+	}
 };
 
 
@@ -550,6 +638,9 @@ jsmpeg.prototype.forwardF = 0;
 
 
 jsmpeg.prototype.decodePicture = function(skipOutput) {
+	this.currentFrame++;
+	this.currentTime = this.currentFrame / this.pictureRate;
+
 	this.buffer.advance(10); // skip temporalReference
 	this.pictureCodingType = this.buffer.getBits(3);
 	this.buffer.advance(16); // skip vbv_delay
@@ -590,13 +681,7 @@ jsmpeg.prototype.decodePicture = function(skipOutput) {
 	
 	
 	if( skipOutput != DECODE_SKIP_OUTPUT ) {
-		if( this.bwFilter ) {
-			this.YToRGBA();
-		}
-		else {
-			this.YCbCrToRGBA();	
-		}
-		this.canvasContext.putImageData(this.currentRGBA, 0, 0);
+		this.renderFrame();
 
 		if(this.externalDecodeCallback) {
 			this.externalDecodeCallback(this, this.canvas);
@@ -668,30 +753,26 @@ jsmpeg.prototype.YCbCrToRGBA = function() {
 			b = (cb + ((cb * 198) >> 8)) - 227;
 			
 			// Line 1
-			y = pY[yIndex1++];
-			pRGBA[rgbaIndex1] = y + r;
-			pRGBA[rgbaIndex1+1] = y - g;
-			pRGBA[rgbaIndex1+2] = y + b;
-			rgbaIndex1 += 4;
-			
-			y = pY[yIndex1++];
-			pRGBA[rgbaIndex1] = y + r;
-			pRGBA[rgbaIndex1+1] = y - g;
-			pRGBA[rgbaIndex1+2] = y + b;
-			rgbaIndex1 += 4;
-			
+			var y1 = pY[yIndex1++];
+			var y2 = pY[yIndex1++];
+			pRGBA[rgbaIndex1]   = y1 + r;
+			pRGBA[rgbaIndex1+1] = y1 - g;
+			pRGBA[rgbaIndex1+2] = y1 + b;
+			pRGBA[rgbaIndex1+4] = y2 + r;
+			pRGBA[rgbaIndex1+5] = y2 - g;
+			pRGBA[rgbaIndex1+6] = y2 + b;
+			rgbaIndex1 += 8;
+
 			// Line 2
-			y = pY[yIndex2++];
-			pRGBA[rgbaIndex2] = y + r;
-			pRGBA[rgbaIndex2+1] = y - g;
-			pRGBA[rgbaIndex2+2] = y + b;
-			rgbaIndex2 += 4;
-			
-			y = pY[yIndex2++];
-			pRGBA[rgbaIndex2] = y + r;
-			pRGBA[rgbaIndex2+1] = y - g;
-			pRGBA[rgbaIndex2+2] = y + b;
-			rgbaIndex2 += 4;
+			var y3 = pY[yIndex2++];
+			var y4 = pY[yIndex2++];
+			pRGBA[rgbaIndex2]   = y3 + r;
+			pRGBA[rgbaIndex2+1] = y3 - g;
+			pRGBA[rgbaIndex2+2] = y3 + b;
+			pRGBA[rgbaIndex2+4] = y4 + r;
+			pRGBA[rgbaIndex2+5] = y4 - g;
+			pRGBA[rgbaIndex2+6] = y4 + b;
+			rgbaIndex2 += 8;
 		}
 		
 		yIndex1 += yNext2Lines;
@@ -702,31 +783,126 @@ jsmpeg.prototype.YCbCrToRGBA = function() {
 	}
 };
 
-jsmpeg.prototype.YToRGBA = function() {	
-	// Luma only
-	var pY = this.currentY;
-	var pRGBA = this.currentRGBA32;
-
-	var yIndex = 0;
-	var yNext2Lines = (this.codedWidth - this.width);
-
-	var rgbaIndex = 0;	
-	var cols = this.width;
-	var rows = this.height;
-
-	var y;
-
-	for( var row = 0; row < rows; row++ ) {
-		for( var col = 0; col < cols; col++ ) {
-			y = pY[yIndex++];
-			pRGBA[rgbaIndex++] = 0xff000000 | y << 16 | y << 8 | y;
-		}
-		
-		yIndex += yNext2Lines;
-	}
+jsmpeg.prototype.renderFrame2D = function() {
+	this.YCbCrToRGBA();
+	this.canvasContext.putImageData(this.currentRGBA, 0, 0);
 };
 
 
+// ----------------------------------------------------------------------------
+// Accelerated WebGL YCbCrToRGBA conversion
+
+jsmpeg.prototype.gl = null;
+jsmpeg.prototype.program = null;
+jsmpeg.prototype.YTexture = null;
+jsmpeg.prototype.CBTexture = null;
+jsmpeg.prototype.CRTexture = null;
+
+jsmpeg.prototype.createTexture = function(index, name) {
+	var gl = this.gl;
+	var texture = gl.createTexture();
+	
+	gl.bindTexture(gl.TEXTURE_2D, texture);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+	gl.uniform1i(gl.getUniformLocation(this.program, name), index);
+	
+	return texture;
+};
+
+jsmpeg.prototype.compileShader = function(type, source) {
+	var gl = this.gl;
+	var shader = gl.createShader(type);
+	gl.shaderSource(shader, source);
+	gl.compileShader(shader);
+	
+	if( !gl.getShaderParameter(shader, gl.COMPILE_STATUS) ) {
+		throw new Error(gl.getShaderInfoLog(shader));
+	}
+		
+	return shader;
+};
+
+jsmpeg.prototype.initWebGL = function() {
+	// attempt to get a webgl context
+	try {
+		var gl = this.gl = this.canvas.getContext('webgl') || this.canvas.getContext('experimental-webgl');
+	} catch (e) {
+		return false;
+	}
+	
+	if (!gl) {
+		return false;
+	}
+
+	// init buffers
+	this.buffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 0, 1, 1, 0, 1, 1]), gl.STATIC_DRAW);
+
+	// The main YCbCrToRGBA Shader
+	this.program = gl.createProgram();
+	gl.attachShader(this.program, this.compileShader(gl.VERTEX_SHADER, SHADER_VERTEX_IDENTITY));
+	gl.attachShader(this.program, this.compileShader(gl.FRAGMENT_SHADER, SHADER_FRAGMENT_YCBCRTORGBA));
+	gl.linkProgram(this.program);
+	
+	if( !gl.getProgramParameter(this.program, gl.LINK_STATUS) ) {
+		throw new Error(gl.getProgramInfoLog(this.program));
+	}
+	
+	gl.useProgram(this.program);
+	
+	// setup textures
+	this.YTexture = this.createTexture(0, 'YTexture');
+	this.CBTexture = this.createTexture(1, 'CBTexture');
+	this.CRTexture = this.createTexture(2, 'CRTexture');
+	
+	var vertexAttr = gl.getAttribLocation(this.program, 'vertex');
+	gl.enableVertexAttribArray(vertexAttr);
+	gl.vertexAttribPointer(vertexAttr, 2, gl.FLOAT, false, 0, 0);
+
+
+	// Shader for the loading screen
+	this.loadingProgram = gl.createProgram();
+	gl.attachShader(this.loadingProgram, this.compileShader(gl.VERTEX_SHADER, SHADER_VERTEX_IDENTITY));
+	gl.attachShader(this.loadingProgram, this.compileShader(gl.FRAGMENT_SHADER, SHADER_FRAGMENT_LOADING));
+	gl.linkProgram(this.loadingProgram);
+
+	gl.useProgram(this.loadingProgram);
+
+	vertexAttr = gl.getAttribLocation(this.loadingProgram, 'vertex');
+	gl.enableVertexAttribArray(vertexAttr);
+	gl.vertexAttribPointer(vertexAttr, 2, gl.FLOAT, false, 0, 0);
+	
+	return true;
+};
+
+jsmpeg.prototype.renderFrameGL = function() {
+	var gl = this.gl;
+
+	// WebGL doesn't like Uint8ClampedArrays, so we have to create a Uint8Array view for 
+	// each plane
+	var uint8Y = new Uint8Array(this.currentY.buffer),
+		uint8Cr = new Uint8Array(this.currentCr.buffer),
+		uint8Cb = new Uint8Array(this.currentCb.buffer);
+	
+	gl.activeTexture(gl.TEXTURE0);
+	gl.bindTexture(gl.TEXTURE_2D, this.YTexture);
+
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, this.codedWidth, this.height, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, uint8Y);
+	
+	gl.activeTexture(gl.TEXTURE1);
+	gl.bindTexture(gl.TEXTURE_2D, this.CBTexture);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, this.halfWidth, this.height/2, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, uint8Cr);
+	
+	gl.activeTexture(gl.TEXTURE2);
+	gl.bindTexture(gl.TEXTURE_2D, this.CRTexture);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, this.halfWidth, this.height/2, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, uint8Cb);
+	
+	gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+};
 
 
 // ----------------------------------------------------------------------------
@@ -1031,12 +1207,6 @@ jsmpeg.prototype.copyMacroblock = function(motionH, motionV, sY, sCr, sCb ) {
 			}
 		}
 	}
-	
-	if( this.bwFilter ) {
-		// No need to copy chrominance when black&white filter is active
-		return;
-	}
-	
 
 	// Chrominance
 	
@@ -1184,10 +1354,7 @@ jsmpeg.prototype.decodeBlock = function(block) {
 	var
 		n = 0,
 		quantMatrix;
-	
-	// Clear preverious data
-	this.fillArray(this.blockData, 0);
-	
+		
 	// Decode DC coefficient of intra-coded blocks
 	if( this.macroblockIntra ) {
 		var 
@@ -1297,15 +1464,6 @@ jsmpeg.prototype.decodeBlock = function(block) {
 		this.blockData[dezigZagged] = level * PREMULTIPLIER_MATRIX[dezigZagged];
 	};
 	
-	// Transform block data to the spatial domain
-	if( n == 1 ) {
-		// Only DC coeff., no IDCT needed
-		this.fillArray(this.blockData, (this.blockData[0] + 128) >> 8);
-	}
-	else {
-		this.IDCT();
-	}
-	
 	// Move block to its place
 	var
 		destArray,
@@ -1328,38 +1486,82 @@ jsmpeg.prototype.decodeBlock = function(block) {
 		scan = (this.codedWidth >> 1) - 8;
 		destIndex = ((this.mbRow * this.codedWidth) << 2) + (this.mbCol << 3);
 	}
-	
-	n = 0;
-	
-	var blockData = this.blockData;
+
 	if( this.macroblockIntra ) {
 		// Overwrite (no prediction)
-		this.copyBlockToDestination(this.blockData, destArray, destIndex, scan);
+		if (n == 1) {
+			this.copyValueToDestination((this.blockData[0] + 128) >> 8, destArray, destIndex, scan);
+			this.blockData[0] = 0;
+		} else {
+			this.IDCT();
+			this.copyBlockToDestination(this.blockData, destArray, destIndex, scan);
+			this.blockData.set(this.zeroBlockData);	
+		}
 	}
 	else {
 		// Add data to the predicted macroblock
-		this.addBlockToDestination(this.blockData, destArray, destIndex, scan);
+		if (n == 1) {
+			this.addValueToDestination((this.blockData[0] + 128) >> 8, destArray, destIndex, scan);
+			this.blockData[0] = 0;
+		} else {
+			this.IDCT();
+			this.addBlockToDestination(this.blockData, destArray, destIndex, scan);	
+			this.blockData.set(this.zeroBlockData);	
+		}
 	}
+	
+	n = 0;
 };
 
-
 jsmpeg.prototype.copyBlockToDestination = function(blockData, destArray, destIndex, scan) {
-	var n = 0;
-	for( var i = 0; i < 8; i++ ) {
-		for( var j = 0; j < 8; j++ ) {
-			destArray[destIndex++] = blockData[n++];
-		}
-		destIndex += scan;
+	for( var n = 0; n < 64; n += 8, destIndex += scan+8 ) {
+		destArray[destIndex+0] = blockData[n+0];
+		destArray[destIndex+1] = blockData[n+1];
+		destArray[destIndex+2] = blockData[n+2];
+		destArray[destIndex+3] = blockData[n+3];
+		destArray[destIndex+4] = blockData[n+4];
+		destArray[destIndex+5] = blockData[n+5];
+		destArray[destIndex+6] = blockData[n+6];
+		destArray[destIndex+7] = blockData[n+7];
 	}
 };
 
 jsmpeg.prototype.addBlockToDestination = function(blockData, destArray, destIndex, scan) {
-	var n = 0;
-	for( var i = 0; i < 8; i++ ) {
-		for( var j = 0; j < 8; j++ ) {
-			destArray[destIndex++] += blockData[n++];
-		}
-		destIndex += scan;
+	for( var n = 0; n < 64; n += 8, destIndex += scan+8 ) {
+		destArray[destIndex+0] += blockData[n+0];
+		destArray[destIndex+1] += blockData[n+1];
+		destArray[destIndex+2] += blockData[n+2];
+		destArray[destIndex+3] += blockData[n+3];
+		destArray[destIndex+4] += blockData[n+4];
+		destArray[destIndex+5] += blockData[n+5];
+		destArray[destIndex+6] += blockData[n+6];
+		destArray[destIndex+7] += blockData[n+7];
+	}
+};
+
+jsmpeg.prototype.copyValueToDestination = function(value, destArray, destIndex, scan) {
+	for( var n = 0; n < 64; n += 8, destIndex += scan+8 ) {
+		destArray[destIndex+0] = value;
+		destArray[destIndex+1] = value;
+		destArray[destIndex+2] = value;
+		destArray[destIndex+3] = value;
+		destArray[destIndex+4] = value;
+		destArray[destIndex+5] = value;
+		destArray[destIndex+6] = value;
+		destArray[destIndex+7] = value;
+	}
+};
+
+jsmpeg.prototype.addValueToDestination = function(value, destArray, destIndex, scan) {
+	for( var n = 0; n < 64; n += 8, destIndex += scan+8 ) {
+		destArray[destIndex+0] += value;
+		destArray[destIndex+1] += value;
+		destArray[destIndex+2] += value;
+		destArray[destIndex+3] += value;
+		destArray[destIndex+4] += value;
+		destArray[destIndex+5] += value;
+		destArray[destIndex+6] += value;
+		destArray[destIndex+7] += value;
 	}
 };
 
@@ -2141,7 +2343,51 @@ var
 	START_SLICE_LAST = 0xAF,
 	START_PICTURE = 0x00,
 	START_EXTENSION = 0xB5,
-	START_USER_DATA = 0xB2;
+	START_USER_DATA = 0xB2,
+
+	// Shaders for accelerated WebGL YCbCrToRGBA conversion
+	SHADER_FRAGMENT_YCBCRTORGBA = [
+		'precision mediump float;',
+		'uniform sampler2D YTexture;',
+		'uniform sampler2D CBTexture;',
+		'uniform sampler2D CRTexture;',
+		'varying vec2 texCoord;',
+	
+		'void main() {',
+			'float y = texture2D(YTexture, texCoord).r;',
+			'float cr = texture2D(CBTexture, texCoord).r - 0.5;',
+			'float cb = texture2D(CRTexture, texCoord).r - 0.5;',
+			
+			'gl_FragColor = vec4(',
+				'y + 1.4 * cr,',
+				'y + -0.343 * cb - 0.711 * cr,',
+				'y + 1.765 * cb,',
+				'1.0',
+			');',
+		'}'
+	].join('\n'),
+
+	SHADER_FRAGMENT_LOADING = [
+		'precision mediump float;',
+		'uniform float loaded;',
+		'varying vec2 texCoord;',
+
+		'void main() {',
+			'float c = ceil(loaded-(1.0-texCoord.y));',
+			//'float c = ceil(loaded-(1.0-texCoord.y) +sin((texCoord.x+loaded)*16.0)*0.01);', // Fancy wave anim
+			'gl_FragColor = vec4(c,c,c,1);',
+		'}'
+	].join('\n'),
+	
+	SHADER_VERTEX_IDENTITY = [
+		'attribute vec2 vertex;',
+		'varying vec2 texCoord;',
+		
+		'void main() {',
+			'texCoord = vertex;',
+			'gl_Position = vec4((vertex * 2.0 - 1.0) * vec2(1, -1), 0.0, 1.0);',
+		'}'
+	].join('\n');
 	
 var MACROBLOCK_TYPE_TABLES = [
 	null,

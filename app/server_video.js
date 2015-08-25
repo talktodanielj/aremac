@@ -1,3 +1,4 @@
+"use strict";
 
 var connect = require("connect");
 var restify = require('restify');
@@ -220,6 +221,10 @@ var streamServerCallback  = function(request, response) {
   height = (params[2] || 240)|0;
 
   if( params[0] == STREAM_SECRET ) {
+
+    width = (params[1] || 320)|0;
+    height = (params[2] || 240)|0;
+
     console.log(
       'Stream Connected: ' + request.socket.remoteAddress + 
       ':' + request.socket.remotePort + ' size: ' + width + 'x' + height
@@ -256,15 +261,15 @@ var app = connect()
 
 console.log("Starting Peolple Counting server on port " + PORT);
 app.listen(PORT);
-
+  
 enableDestroy(app);
 
 // Start keep alive timer
-timers = require("timers");
+var timers = require("timers");
 
 var signalServerIsRunningCallback  = function() 
 {
-  var outputFilename = '/var/tmp/nodejs_alive';
+  var outputFilename = './tmp/nodejs_alive';
   if(!fs.exists(outputFilename))
   {
     fs.writeFile(outputFilename, "", function(err) {
@@ -280,8 +285,7 @@ timers.setInterval(signalServerIsRunningCallback, 500);
 
 // spawn the thread that starts ffmpeg
 /*
-ffmpeg -s 640x480 -f video4linux2 -i /dev/video0 -f mpeg1video \
--b 800k -r 30 http://example.com:8082/yourpassword/640/480/
+ffmpeg -s 640x480 -f video4linux2 -i /dev/video0 -f mpeg1video -b 800k -r 30 http://example.com:8082/yourpassword/640/480/
 
 */
 
@@ -289,8 +293,13 @@ function spawnFFMPEGProcess()
 {
   if(FFMPEG)
   {
-    var spawn = require('child_process').spawn,
-    ffmpeg = spawn('ffmpeg', ["-s", "640x480", "-f", "video4linux2", "-i", "/dev/video0", "-f", "mpeg1video", "-b:a", "1200k", "-r", "30", "http://127.0.0.1:"+PORT+"/stream/secret/640/480/"]);
+    var spawn = require('child_process').spawn;
+
+   ffmpeg = spawn('ffmpeg', ["-s", "640x480", "-f", "video4linux2", "-i", "/dev/video0", "-f", "mpeg1video", "-b:v", "800k", "-r", "30", "http://127.0.0.1:"+PORT+"/stream/secret/640/480/"]);
+    //ffmpeg = spawn('ffmpeg', ["-s", "1920x1080", "-f", "video4linux2", "-i", "/dev/video0", "-r", "30", "http://127.0.0.1:"+PORT+"/stream/secret/1920/1080/"]);
+
+   //ffmpeg = spawn('ffmpeg', ["-s", "1920x1080", "-f", "video4linux2", "-i", "/dev/video0", "-r", "30", "http://127.0.0.1:"+PORT+"/stream/secret/1920/1080/"]);
+
 
     ffmpeg.stdout.on('data', function (data) {
       //console.log(data);
