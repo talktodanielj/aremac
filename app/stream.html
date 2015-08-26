@@ -8,7 +8,7 @@
 		change this internal resolution to whatever the source provides. The size the
 		canvas is displayed on the website is dictated by the CSS style.
 	-->
-	<canvas id="videoCanvas" width="640" height="480" style="margin-top: 5px; margin-left: 5px;">
+	<canvas id="videoCanvas" width="640" height="480" style="margin-top: 5px; margin-left: 70px; border: 1px solid black;">
 		<p>
 			Please use a browser that supports the Canvas Element, like
 			<a href="http://www.google.com/chrome">Chrome</a>,
@@ -33,13 +33,16 @@
     		ws_socket_uri = "ws:";
 		}
 		
-		ws_socket_uri += "//" + loc.hostname + ":9001" ;
+		ws_socket_uri += "//" + loc.hostname + ":9092" ;
 		ws_socket_uri += "/socket";
 
 		console.log('WS uri:' + ws_socket_uri);
 
 		// Setup the WebSocket connection and start the player
 		var client = new WebSocket( ws_socket_uri );
+		setTimeout(function(){
+    		console.log("Waiting for ws client");
+		}, 2000);
 		var player = new jsmpeg(client, {canvas:canvas});
 	</script>
 </div>
